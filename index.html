@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DOMO 手機點餐系統 - 營運正式版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Firebase SDK 相容模式 -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #fdfdfd; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .tab-active { color: #b45309 !important; border-bottom: 4px solid #fbbf24 !important; font-weight: 900; }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        .animate-slide-up { animation: slideUp 0.3s ease-out; }
+        .menu-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        input[type="checkbox"] { accent-color: #fbbf24; width: 20px; height: 20px; cursor: pointer; border-radius: 4px; }
+        @media (min-width: 768px) { .kds-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; } }
+    </style>
+</head>
+<body class="pb-24">
+
+    <!-- Header -->
+    <header class="bg-amber-400 p-6 sticky top-0 z-20 shadow-sm flex justify-between items-center text-slate-900">
+        <div>
+            <h1 class="text-2xl font-black italic tracking-tighter leading-none">DOMO EAT</h1>
+            <p class="text-[10px] font-bold opacity-90 mt-1 uppercase">三重區 | 數位點餐管理系統</p>
+        </div>
+        <button onclick="toggleAdminView()" class="bg-slate-900 text-amber-400 p-3 rounded-2xl shadow-xl active:scale-90 transition-transform">
+            <i data-lucide="lock" class="w-5 h-5"></i>
+        </button>
+    </header>
+
+    <!-- 顧客點餐畫面 -->
+    <div id="customer-view">
+        <nav id="category-tabs" class="flex overflow-x-auto bg-white border-b sticky top-[80px] z-10 no-scrollbar shadow-sm"></nav>
+        <main id="menu-container" class="p-4 mb-10"></main>
+    </div>
+
+    <!-- 廚房後台畫面 -->
+    <div id="admin-view" class="hidden min-h-screen bg-slate-900 p-6 text-white overflow-x-auto">
+        <div class="flex justify-between items-center mb-8 border-b border-slate-700 pb-4">
+            <div>
+                <h2 class="text-3xl font-black text-amber-400 tracking-tighter">大易園分類出單看板</h2>
+                <p id="kds-status" class="text-xs text-slate-500 uppercase tracking-widest mt-1 italic">同步狀態：連線中...</p>
+            </div>
+            <div class="flex items-center gap-6">
+                <p id="kds-time" class="text-2xl font-black tabular-nums"></p>
+                <button onclick="toggleAdminView()" class="bg-slate-800 px-6 py-2 rounded-xl font-bold border border-slate-700 active:scale-95 transition-all">返回點餐</button>
+            </div>
+        </div>
+        <div id="kds-container" class="kds-grid"></div>
+    </div>
+
+    <!-- 底部總額霸 (精簡版，不擋菜單) -->
+    <div id="cart-bar" class="fixed bottom-0 left-0 right-0 p-4 bg-white/95 backdrop-blur-md border-t border-gray-100 shadow-[0_-10px_30px_rgba(0,0,0,0.1)] z-30 flex items-center justify-between hidden animate-slide-up">
+        <div class="flex items-center gap-3 cursor-pointer" onclick="openCheckout()">
+            <div class="relative bg-slate-900 p-3 rounded-2xl shadow-inner">
+                <i data-lucide="shopping-bag" class="text-amber-400 w-6 h-6"></i>
+                <span id="cart-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-md">0</span>
+            </div>
+            <div>
+                <p id="cart-total" class="text-2xl font-black text-amber-600 tracking-tighter">$0</p>
+                <p class="text-[9px] text-gray-400 font-black uppercase">單據細節 <i data-lucide="chevron-up" class="inline w-3 h-3"></i></p>
+            </div>
+        </div>
+        <button onclick="openCheckout()" class="bg-slate-900 text-white px-12 py-4 rounded-2xl font-black text-sm active:scale-95 shadow-xl">
+            去結帳
+        </button>
+    </div>
+
+    <!-- 結帳 Modal -->
+    <div id="checkout-modal" class="fixed inset-0 bg-white z-[50] overflow-y-auto hidden">
+        <div class="sticky top-0 bg-white/90 backdrop-blur-md z-10 flex items-center justify-between p-6 border-b border-gray-100">
+            <h2 class="text-2xl font-black text-slate-800 tracking-tight">訂單最後確認</h2>
+            <button onclick="closeCheckout()" class="p-2 bg-gray-50 rounded-full hover:bg-gray-200 transition-colors"><i data-lucide="x"></i></button>
+        </div>
+        <div class="p-6 space-y-8 pb-32">
+            <section>
+                <h3 class="font-black text-xs text-gray-400 tracking-widest uppercase mb-4 italic">01. 已選餐點</h3>
+                <div id="checkout-items" class="space-y-3"></div>
+            </section>
+            <section>
+                <h3 class="font-black text-xs text-gray-400 tracking-widest uppercase mb-4 italic">02. 取餐資訊與桌號</h3>
+                <div class="grid grid-cols-2 gap-3 mb-4">
+                    <button onclick="setOrderType('內用')" id="type-dinein" class="py-4 rounded-2xl border-2 font-black transition-all border-amber-400 bg-amber-50 text-slate-900">內用</button>
+                    <button onclick="setOrderType('外帶')" id="type-takeout" class="py-4 rounded-2xl border-2 font-black transition-all border-gray-100 text-slate-400">外帶</button>
+                </div>
+                <div id="table-select" class="grid grid-cols-5 gap-2">
+                    <button onclick="selectTable(1)" class="table-btn py-4 rounded-xl border-2 font-bold text-sm bg-gray-50">1桌</button>
+                    <button onclick="selectTable(2)" class="table-btn py-4 rounded-xl border-2 font-bold text-sm bg-gray-50">2桌</button>
+                    <button onclick="selectTable(3)" class="table-btn py-4 rounded-xl border-2 font-bold text-sm bg-gray-50">3桌</button>
+                    <button onclick="selectTable(4)" class="table-btn py-4 rounded-xl border-2 font-bold text-sm bg-gray-50">4桌</button>
+                    <button onclick="selectTable(5)" class="table-btn py-4 rounded-xl border-2 font-bold text-sm bg-gray-50">5桌</button>
+                </div>
+                <input id="name-input" type="text" placeholder="請輸入姓名" class="hidden w-full p-4 bg-gray-50 rounded-2xl border-2 border-gray-100 focus:border-amber-400 outline-none font-black shadow-inner">
+            </section>
+            <section>
+                <h3 class="font-black text-xs text-gray-400 tracking-widest uppercase mb-4 italic">03. 預計付款方式</h3>
+                <div class="space-y-3">
+                    <button onclick="selectPayment('cash')" id="pay-cash" class="payment-btn p-5 rounded-2xl border-2 flex items-center justify-between border-amber-400 bg-amber-50">
+                        <span class="font-black">現場付款 / 櫃檯結帳</span>
+                        <div class="w-5 h-5 rounded-full bg-amber-400 border-2 border-amber-400"></div>
+                    </button>
+                    <button onclick="selectPayment('linepay')" id="pay-linepay" class="payment-btn p-5 rounded-2xl border-2 flex items-center justify-between border-gray-100">
+                        <span class="font-black text-slate-400">LINE Pay / 街口支付</span>
+                        <div class="w-5 h-5 rounded-full border-2 border-gray-200"></div>
+                    </button>
+                </div>
+            </section>
+            <section class="pt-8 border-t border-gray-100 mb-10">
+                <div class="flex justify-between items-end mb-8 px-2">
+                    <div><p class="text-[10px] font-black text-gray-400 uppercase tracking-widest">應付總額</p><h3 class="text-5xl font-black text-slate-900 tracking-tighter tabular-nums">$<span id="final-total">0</span></h3></div>
+                </div>
+                <button id="submit-btn" onclick="submitOrder()" class="w-full bg-amber-400 text-slate-900 py-7 rounded-3xl font-black text-xl shadow-xl shadow-amber-100 active:scale-95 transition-all flex items-center justify-center gap-3">
+                    <i data-lucide="send" class="w-6 h-6"></i> 確認發送同步下單
+                </button>
+            </section>
+        </div>
+    </div>
+
+    <!-- 成功畫面 -->
+    <div id="success-overlay" class="fixed inset-0 bg-white z-[60] flex flex-col items-center justify-center p-10 text-center hidden">
+        <div class="w-24 h-24 bg-green-50 text-green-500 rounded-full flex items-center justify-center mb-8 shadow-inner animate-bounce"><i data-lucide="check" class="w-14 h-14"></i></div>
+        <h2 class="text-4xl font-black mb-4 tracking-tighter italic">訂單同步成功！</h2>
+        <p class="text-gray-500 mb-10 font-bold leading-relaxed text-sm">您的訂單已同步至廚房看板與老闆 LINE。<br>請留意櫃檯叫號取餐，謝謝！</p>
+        <button onclick="location.reload()" class="w-full max-w-xs py-5 bg-slate-900 text-white rounded-2xl font-black shadow-2xl active:scale-95">回首頁點餐</button>
+    </div>
+
+    <script>
+        // ==========================================
+        // 配置區 (修復權限問題與路徑)
+        // ==========================================
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'dayiyuan-pos-stable';
+        const ADMIN_PWD = "8888";
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbxaTmPc-wCyS3XK3QIZPHzjRzK0lPmSYFBlX5yn36gf5JTKTooFzUops2cZvTk_DIAC/exec";
+        
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const auth = firebase.auth();
+
+        const MENU_DATA = [
+            { category: "漢堡類", station: "煎台", items: [{ name: "豬肉漢堡", price: 35 }, { name: "豬排漢堡", price: 45 }, { name: "香雞漢堡", price: 35 }, { name: "鮪魚漢堡", price: 40 }, { name: "培根豬漢堡", price: 50 }, { name: "卡啦雞腿堡", price: 60 }, { name: "牛肉漢堡", price: 50 }, { name: "煙燻雞肉堡", price: 45 }] },
+            { category: "吐司蛋類", station: "櫃檯", items: [{ name: "烤煎蛋吐司", price: 25 }, { name: "烤起司蛋吐", price: 30 }, { name: "烤火腿蛋吐", price: 30 }, { name: "烤肉鬆蛋吐", price: 35 }, { name: "烤玉米蛋吐", price: 40 }, { name: "烤鮪魚蛋吐", price: 40 }, { name: "烤豬肉蛋吐", price: 40 }, { name: "烤豬排蛋吐", price: 50 }, { name: "烤總匯吐司", price: 60 }] },
+            { category: "蛋餅類", station: "煎台", items: [{ name: "原味蛋餅", price: 25 }, { name: "起司蛋餅", price: 30 }, { name: "火腿蛋餅", price: 30 }, { name: "熱狗蛋餅", price: 35 }, { name: "肉鬆蛋餅", price: 35 }, { name: "玉米蛋餅", price: 40 }, { name: "九層塔蛋餅", price: 30 }, { name: "薯餅蛋餅", price: 40 }, { name: "豬排蛋餅", price: 50 }, { name: "九層塔乳酪", price: 40 }] },
+            { category: "厚片/法式", station: "櫃檯", items: [{ name: "巧克力厚片", price: 35 }, { name: "奶酥厚片", price: 35 }, { name: "花生厚片", price: 35 }, { name: "香蒜厚片", price: 35 }, { name: "法式原味", price: 30 }, { name: "法式起司", price: 40 }, { name: "法式培根", price: 45 }, { name: "乳酪餅(原)", price: 35 }] },
+            { category: "麵點點心", station: "煎台", items: [{ name: "黑胡椒麵", price: 55 }, { name: "蘑菇鐵板麵", price: 55 }, { name: "宮保雞丁麵", price: 60 }, { name: "三杯雞麵", price: 60 }, { name: "三星蔥抓餅", price: 45 }, { name: "煎餃(8顆)", price: 40 }, { name: "黃金脆薯", price: 35 }, { name: "雞塊(5塊)", price: 35 }, { name: "荷包蛋", price: 15 }] },
+            { category: "特餐飲料", station: "櫃檯", items: [{ name: "A 經濟餐", price: 55 }, { name: "B 滿足餐", price: 75 }, { name: "今日特餐", price: 65 }, { name: "紅茶(中)", price: 15 }, { name: "奶茶(中)", price: 20 }, { name: "鮮奶茶(中)", price: 25 }, { name: "拿鐵咖啡", price: 30 }, { name: "玉米濃湯", price: 40 }] }
+        ];
+
+        let cart = []; 
+        let activeCategory = MENU_DATA[0].category;
+        let orderType = '內用';
+        let tableNum = null;
+        let paymentMethod = 'cash';
+        let orders = [];
+        let firebaseUser = null;
+        let ordersUnsubscribe = null;
+
+        // ==========================================
+        // 初始化邏輯 (Rule 3: 登入優先)
+        // ==========================================
+
+        async function init() {
+            // 監聽登入狀態切換
+            auth.onAuthStateChanged(async (user) => {
+                firebaseUser = user;
+                if (user) {
+                    document.getElementById('kds-status').innerText = "系統連線正常";
+                    // 認證成功後才開始監聽看板，避免權限報錯
+                    if (ordersUnsubscribe) ordersUnsubscribe();
+                    listenToOrders();
+                    renderTabs();
+                    renderMenu();
+                } else {
+                    // 自動執行匿名登入 (Rule 3)
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await auth.signInWithCustomToken(__initial_auth_token);
+                        } else {
+                            await auth.signInAnonymously();
+                        }
+                    } catch (e) {
+                        console.error("Auth Fail:", e);
+                    }
+                }
+            });
+
+            setInterval(() => {
+                const timeEl = document.getElementById('kds-time');
+                if (timeEl) timeEl.innerText = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            }, 1000);
+            lucide.createIcons();
+        }
+
+        function renderTabs() {
+            const tabs = document.getElementById('category-tabs');
+            tabs.innerHTML = MENU_DATA.map(cat => `
+                <button onclick="setActiveCategory('${cat.category}')" 
+                    class="px-8 py-5 whitespace-nowrap font-black text-[13px] transition-all ${activeCategory === cat.category ? 'tab-active' : 'text-gray-400'}">
+                    ${cat.category}
+                </button>
+            `).join('');
+        }
+
+        function setActiveCategory(cat) { activeCategory = cat; renderTabs(); renderMenu(); }
+
+        function renderMenu() {
+            const container = document.getElementById('menu-container');
+            const section = MENU_DATA.find(c => c.category === activeCategory);
+            container.innerHTML = `<div class="menu-grid">` + section.items.map((item, idx) => `
+                <div class="bg-white p-4 rounded-[2rem] shadow-sm flex flex-col justify-between border border-gray-100 animate-slide-up">
+                    <div class="mb-2">
+                        <h3 class="font-black text-slate-800 text-[14px] leading-tight h-10 overflow-hidden line-clamp-2">${item.name}</h3>
+                        <p class="text-amber-500 font-black text-base mt-1">$${item.price}</p>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="flex flex-col gap-2 p-2 bg-slate-50 rounded-2xl border border-slate-100 text-[10px] font-black text-slate-500">
+                            ${["漢堡類", "吐司蛋類", "蛋餅類"].includes(activeCategory) ? 
+                            `<label class="flex items-center gap-2 cursor-pointer active:text-amber-600"><input type="checkbox" id="cheese-${activeCategory}-${idx}"> 起司+10</label>` : ''}
+                            ${["漢堡類", "吐司蛋類", "麵點點心"].includes(activeCategory) ? 
+                            `<label class="flex items-center gap-2 cursor-pointer active:text-amber-600"><input type="checkbox" id="egg-${activeCategory}-${idx}"> 加蛋+10</label>` : ''}
+                            ${activeCategory === "麵點點心" && item.name.includes("麵") ? 
+                            `<label class="flex items-center gap-2 cursor-pointer text-orange-600 active:text-orange-700"><input type="checkbox" id="pork-${activeCategory}-${idx}"> 豬排+20</label>` : ''}
+                        </div>
+                        <button onclick='addToCartWithAddons("${item.name}", ${item.price}, "${activeCategory}", ${idx})' 
+                            class="w-full bg-amber-400 text-slate-900 py-3 rounded-2xl active:scale-90 shadow-md flex items-center justify-center transition-transform">
+                            <i data-lucide="plus" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('') + `</div>`;
+            lucide.createIcons();
+        }
+
+        function addToCartWithAddons(name, basePrice, category, idx) {
+            let extraPrice = 0;
+            let extras = [];
+            const cheese = document.getElementById(`cheese-${category}-${idx}`);
+            const egg = document.getElementById(`egg-${category}-${idx}`);
+            const pork = document.getElementById(`pork-${category}-${idx}`);
+            if (cheese && cheese.checked) { extraPrice += 10; extras.push("起司"); cheese.checked = false; }
+            if (egg && egg.checked) { extraPrice += 10; extras.push("加蛋"); egg.checked = false; }
+            if (pork && pork.checked) { extraPrice += 20; extras.push("豬排"); pork.checked = false; }
+            const extraLabel = extras.join('+');
+            const cartId = `${name}-${extraLabel}`;
+            const existing = cart.find(i => i.cartId === cartId);
+            if (existing) { existing.qty++; } else {
+                const station = MENU_DATA.find(c => c.category === category).station;
+                cart.push({ name, price: basePrice + extraPrice, extraLabel, qty: 1, cartId, station, id: Date.now() + Math.random() });
+            }
+            updateCartBar();
+        }
+
+        function updateCartBar() {
+            const bar = document.getElementById('cart-bar');
+            const totalQty = cart.reduce((s, i) => s + i.qty, 0);
+            const totalVal = cart.reduce((s, i) => s + (i.price * i.qty), 0);
+            bar.classList.toggle('hidden', totalQty === 0);
+            document.getElementById('cart-badge').innerText = totalQty;
+            document.getElementById('cart-total').innerText = `$${totalVal}`;
+        }
+
+        function openCheckout() {
+            document.getElementById('checkout-modal').classList.remove('hidden');
+            renderCheckoutItems();
+            updateTotal();
+            setOrderType('內用');
+        }
+
+        function closeCheckout() { document.getElementById('checkout-modal').classList.add('hidden'); }
+
+        function renderCheckoutItems() {
+            const container = document.getElementById('checkout-items');
+            container.innerHTML = cart.map(item => `
+                <div class="flex justify-between items-center bg-gray-50 p-4 rounded-2xl border border-gray-100 animate-slide-up">
+                    <div class="flex-1">
+                        <p class="font-black text-sm text-slate-800 tracking-tight">${item.name} ${item.extraLabel ? `<span class="text-amber-600 text-[10px] ml-1 font-bold">[${item.extraLabel}]</span>` : ''}</p>
+                        <p class="text-[10px] font-bold text-gray-400 tracking-tight">$${item.price} x ${item.qty}</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center bg-white rounded-xl border border-gray-200 px-1 shadow-sm">
+                            <button onclick="changeQty('${item.cartId}', -1)" class="p-1 text-gray-300 active:text-amber-500"><i data-lucide="minus-circle" class="w-4 h-4"></i></button>
+                            <span class="w-6 text-center font-black text-xs tabular-nums">${item.qty}</span>
+                            <button onclick="changeQty('${item.cartId}', 1)" class="p-1 text-gray-300 active:text-amber-500"><i data-lucide="plus-circle" class="w-4 h-4"></i></button>
+                        </div>
+                        <button onclick="removeItem('${item.cartId}')" class="text-red-300 active:text-red-500 transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    </div>
+                </div>
+            `).join('');
+            updateTotal();
+            lucide.createIcons();
+        }
+
+        function changeQty(cartId, delta) {
+            const item = cart.find(i => i.cartId === cartId);
+            if (item) { item.qty += delta; if (item.qty <= 0) cart = cart.filter(i => i.cartId !== cartId); }
+            updateCartBar(); renderCheckoutItems(); if (cart.length === 0) closeCheckout();
+        }
+
+        function removeItem(cartId) {
+            cart = cart.filter(i => i.cartId !== cartId);
+            updateCartBar(); renderCheckoutItems(); if (cart.length === 0) closeCheckout();
+        }
+
+        function updateTotal() {
+            const final = cart.reduce((s, i) => s + (i.price * i.qty), 0);
+            document.getElementById('final-total').innerText = final;
+        }
+
+        function setOrderType(type) {
+            orderType = type;
+            document.getElementById('type-dinein').className = type === '內用' ? 'py-4 rounded-2xl border-2 font-black border-amber-400 bg-amber-50 text-slate-900 shadow-inner' : 'py-4 rounded-2xl border-2 font-black border-gray-100 text-slate-400';
+            document.getElementById('type-takeout').className = type === '外帶' ? 'py-4 rounded-2xl border-2 font-black border-amber-400 bg-amber-50 text-slate-900 shadow-inner' : 'py-4 rounded-2xl border-2 font-black border-gray-100 text-slate-400';
+            document.getElementById('table-select').classList.toggle('hidden', type === '外帶');
+            document.getElementById('name-input').classList.toggle('hidden', type === '內用');
+            tableNum = null;
+            document.querySelectorAll('.table-btn').forEach(b => b.className = 'table-btn py-4 rounded-xl border-2 font-bold text-sm bg-gray-50 text-slate-400 border-gray-100');
+        }
+
+        function selectTable(n) {
+            tableNum = n;
+            document.querySelectorAll('.table-btn').forEach((b, i) => b.className = (i+1) === n ? 'table-btn py-4 rounded-xl border-2 font-bold text-sm bg-amber-400 text-slate-900 border-amber-400 shadow-lg scale-105 transition-all' : 'table-btn py-4 rounded-xl border-2 font-bold text-sm bg-gray-50 text-slate-400 border-gray-100');
+        }
+
+        function selectPayment(m) {
+            paymentMethod = m;
+            document.querySelectorAll('.payment-btn').forEach(b => b.className = 'payment-btn p-5 rounded-2xl border-2 flex items-center justify-between border-gray-100 text-slate-400');
+            document.getElementById(`pay-${m}`).className = 'payment-btn p-5 rounded-2xl border-2 flex items-center justify-between border-amber-400 bg-amber-50 text-slate-900 shadow-sm';
+            document.querySelectorAll('.payment-btn div').forEach(d => d.className = 'w-5 h-5 rounded-full border-2 border-gray-200');
+            document.querySelector(`#pay-${m} div`).className = 'w-5 h-5 rounded-full bg-amber-400 border-2 border-amber-400 shadow-inner';
+        }
+
+        async function submitOrder() {
+            if (!firebaseUser) return alert("尚未連上雲端，請重整頁面...");
+            const target = orderType === '內用' ? (tableNum ? `${tableNum}桌` : null) : document.getElementById('name-input').value.trim();
+            if (!target) return alert("請寫明桌號或您的姓名！");
+            
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true; btn.innerText = "連線同步中...";
+            const total = cart.reduce((s, i) => s + (i.price * i.qty), 0);
+            
+            const orderPayload = {
+                location: target, type: orderType, payment: paymentMethod, total: total,
+                items: cart.map(i => ({ name: i.name, extra: i.extraLabel, qty: i.qty, station: i.station, ready: false })),
+                isPaid: false, createdAt: firebase.firestore.Timestamp.now()
+            };
+            
+            try {
+                // Rule 1: 寫入指定路徑
+                await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').add(orderPayload);
+                
+                // LINE 同步 (GAS)
+                const lineMsg = `🥪 DOMO 新單 [${target}]\n-----------------\n付款：${paymentMethod}\n總額：NT$ ${total}\n明細：\n${cart.map(i => `- ${i.name}${i.extraLabel ? `[${i.extraLabel}]` : ''} x${i.qty}`).join('\n')}`;
+                const formData = new URLSearchParams(); formData.append('message', lineMsg);
+                await fetch(GAS_URL, { method: 'POST', mode: 'no-cors', body: formData });
+                
+                document.getElementById('success-overlay').classList.remove('hidden');
+            } catch (e) { 
+                console.error(e);
+                alert("下單失敗！請截圖並通知店內人員。"); 
+            } finally { 
+                btn.disabled = false; btn.innerText = "確認發送訂單"; 
+            }
+        }
+
+        // ==========================================
+        // 後台管理邏輯 (KDS)
+        // ==========================================
+
+        function toggleAdminView() {
+            const admin = document.getElementById('admin-view');
+            const customer = document.getElementById('customer-view');
+            const cartBar = document.getElementById('cart-bar');
+            if (admin.classList.contains('hidden')) {
+                const pwd = prompt("後台密碼：");
+                if (pwd === ADMIN_PWD) {
+                    admin.classList.remove('hidden'); customer.classList.add('hidden'); cartBar.classList.add('hidden'); renderKDS();
+                } else if (pwd !== null) alert("密碼錯誤");
+            } else { admin.classList.add('hidden'); customer.classList.remove('hidden'); updateCartBar(); }
+        }
+
+        function listenToOrders() {
+            if (!firebaseUser) return;
+            // Rule 1: 路徑監聽
+            ordersUnsubscribe = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders')
+                .onSnapshot(snapshot => {
+                    orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    renderKDS();
+                }, err => {
+                    console.error("KDS讀取報錯:", err);
+                    document.getElementById('kds-status').innerText = "權限中斷，請重整頁面";
+                });
+        }
+
+        function renderKDS() {
+            const container = document.getElementById('kds-container');
+            if (!container) return;
+            
+            // Rule 2: JS 端排序 (避免複合索引需求)
+            const sortedOrders = [...orders].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+            
+            container.innerHTML = sortedOrders.map(order => `
+                <div class="bg-slate-800 border-2 ${order.isPaid ? 'border-green-500/50' : 'border-slate-700'} rounded-[2.5rem] overflow-hidden flex flex-col shadow-2xl animate-slide-up">
+                    <div class="p-4 bg-slate-700 flex justify-between items-center">
+                        <span class="bg-amber-400 text-slate-900 px-5 py-1.5 rounded-full font-black text-xl shadow-lg">${order.location}</span>
+                        <span class="text-[11px] text-slate-400 font-bold tabular-nums">${order.createdAt ? new Date(order.createdAt.seconds * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : ''}</span>
+                    </div>
+                    <div class="p-5 flex-1 space-y-6">
+                        ${['煎台', '櫃檯'].map(st => `
+                            <div class="bg-black/10 p-3 rounded-2xl border border-white/5 shadow-inner">
+                                <h4 class="text-[10px] font-black text-slate-500 uppercase mb-3 border-b border-slate-700 pb-1 flex items-center gap-2">
+                                    <i data-lucide="${st==='煎台'?'flame':'cup-soda'}" class="w-3 h-3 text-amber-500"></i> ${st}任務區
+                                </h4>
+                                <div class="space-y-3">
+                                    ${order.items.filter(i => i.station === st).map((item, idx) => {
+                                        const realIdx = order.items.indexOf(item);
+                                        return `
+                                            <div onclick="toggleItemReady('${order.id}', ${realIdx})" class="flex justify-between items-center p-2 rounded-xl cursor-pointer ${item.ready ? 'opacity-20 grayscale scale-95' : 'hover:bg-slate-700 active:scale-95 transition-all'}">
+                                                <div class="flex items-center gap-3">
+                                                    <div class="w-5 h-5 rounded-lg border-2 border-slate-600 flex items-center justify-center ${item.ready ? 'bg-green-500 border-green-500' : 'bg-slate-900'}">
+                                                        ${item.ready ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
+                                                    </div>
+                                                    <div>
+                                                        <p class="font-black text-lg ${item.ready ? 'line-through text-slate-500' : ''}">${item.name}</p>
+                                                        ${item.extra ? `<p class="text-[10px] text-amber-500 font-bold leading-none mt-1 italic">★${item.extra}</p>` : ''}
+                                                    </div>
+                                                </div>
+                                                <span class="text-amber-400 font-black text-2xl tracking-tighter">x${item.qty}</span>
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="p-4 bg-black/20 flex flex-col gap-3 border-t border-slate-700/50">
+                        <div class="flex justify-between items-center px-1">
+                             <span class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">${order.payment} / $${order.total}</span>
+                             <button onclick="toggleOrderPaid('${order.id}', ${order.isPaid})" class="text-[10px] font-black px-4 py-1.5 rounded-full border transition-all ${order.isPaid ? 'bg-green-500 border-green-500 text-white shadow-lg' : 'border-slate-600 text-slate-400 active:bg-slate-700'}">
+                                ${order.isPaid ? '已收現' : '標記收款'}
+                             </button>
+                        </div>
+                        <button onclick="finishOrder('${order.id}')" class="w-full bg-green-600 hover:bg-green-500 text-white py-4 rounded-2xl font-black shadow-xl transition-all active:scale-95 text-lg">確認出單</button>
+                    </div>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        async function toggleItemReady(orderId, itemIdx) {
+            const order = orders.find(o => o.id === orderId);
+            const newItems = [...order.items];
+            newItems[itemIdx].ready = !newItems[itemIdx].ready;
+            await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(orderId).update({ items: newItems });
+        }
+
+        async function toggleOrderPaid(orderId, currentStatus) {
+            await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(orderId).update({ isPaid: !currentStatus });
+        }
+
+        async function finishOrder(orderId) {
+            if (confirm("確認此訂單已全部出餐完成？")) {
+                await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(orderId).delete();
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
+
